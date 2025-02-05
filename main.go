@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -50,6 +52,7 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	mux.HandleFunc("GET /admin/metrics", apiCfg.countHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetMetrics)
+	mux.HandleFunc("POST /api/validate_chirp", validate_chirp)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -61,4 +64,46 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func validate_chirp(w http.ResponseWriter, r *http.Request) {
+	type ReqBody struct {
+		Body string `json:"body"`
+	}
+
+	reqParams := ReqBody{}
+	w.Header().Set("Content-Type", "application/json")
+
+	jsonDecoder := json.NewDecoder(r.Body)
+	err := jsonDecoder.Decode(&reqParams)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `{"error": Something went wrong}`)
+		return
+	}
+
+	if len(reqParams.Body) > 140 {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"error": Chirp is too long}`)
+		return
+	}
+	unWantedWords := map[string]string{
+		"kerfuffle": "****",
+		"sharbert":  "****",
+		"fornax":    "****",
+	}
+
+	reqBodyWords := strings.Split(reqParams.Body, " ")
+	for i, word := range reqBodyWords {
+
+		if hiddenWord, exists := unWantedWords[strings.ToLower(word)]; exists {
+			reqBodyWords[i] = hiddenWord
+		}
+	}
+
+	processedBodyStr := strings.Join(reqBodyWords, " ")
+
+	w.WriteHeader(200)
+	fmt.Fprintf(w, `{"cleaned_body": %q}`, processedBodyStr)
+
 }
