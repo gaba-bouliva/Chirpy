@@ -17,7 +17,7 @@ RETURNING id, email, created_at, updated_at
 `
 
 type CreateUserParams struct {
-	ID        int32
+	ID        string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Email     string
@@ -40,11 +40,27 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
-const deleteAll = `-- name: DeleteAll :exec
+const deleteAllUsers = `-- name: DeleteAllUsers :exec
 DELETE FROM users
 `
 
-func (q *Queries) DeleteAll(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteAll)
+func (q *Queries) DeleteAllUsers(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllUsers)
 	return err
+}
+
+const getUserById = `-- name: GetUserById :one
+SELECT id, email, created_at, updated_at FROM users WHERE id = $1 LIMIT 1
+`
+
+func (q *Queries) GetUserById(ctx context.Context, id string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserById, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
