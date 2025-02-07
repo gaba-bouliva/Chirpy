@@ -58,6 +58,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.countHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetMetrics)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleChirp)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -70,6 +71,48 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	chirpList, err := cfg.db.GetAllChirps(context.Background())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
+
+	type resBody struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserId    string    `json:"user_id"`
+	}
+
+	chirpListData := []resBody{}
+
+	for _, chirp := range chirpList {
+		newChirp := resBody{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserId:    chirp.UserID,
+		}
+
+		chirpListData = append(chirpListData, newChirp)
+	}
+
+	jsonRes, err := json.Marshal(chirpListData)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
+
+	w.Write(jsonRes)
+
 }
 
 func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
