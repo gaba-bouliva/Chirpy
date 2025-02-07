@@ -57,7 +57,7 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	mux.HandleFunc("GET /admin/metrics", apiCfg.countHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetMetrics)
-	mux.HandleFunc("POST /api/validate_chirp", validate_chirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handleChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -91,7 +91,7 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createUserParam := database.CreateUserParams{
-		ID:        int32(uuid.New().ID()),
+		ID:        uuid.NewString(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Email:     reqBodyParam.Email,
@@ -106,7 +106,7 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type resBody struct {
-		ID        int32     `json:"id"`
+		ID        string    `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string    `json:"email"`
@@ -127,46 +127,98 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonRes)
 }
 
-func validate_chirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handleChirp(w http.ResponseWriter, r *http.Request) {
 	type ReqBody struct {
-		Body string `json:"body"`
+		Body   string `json:"body"`
+		UserId string `json:"user_id"`
 	}
-
 	reqParams := ReqBody{}
-	w.Header().Set("Content-Type", "application/json")
 
+	w.Header().Set("Content-Type", "application/json")
 	jsonDecoder := json.NewDecoder(r.Body)
 	err := jsonDecoder.Decode(&reqParams)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"error": Something went wrong}`)
+		log.Fatalln(err)
 		return
 	}
 
-	if len(reqParams.Body) > 140 {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"error": Chirp is too long}`)
+	user, err := cfg.db.GetUserById(context.Background(), reqParams.UserId)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		w.Write([]byte("error encountered could not retrieve user"))
 		return
 	}
+
+	validChirpBody, err := validateChirpBody(reqParams.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Println(err)
+		w.Write([]byte("invalid chirp body provided"))
+		return
+	}
+
+	createChirpParams := database.CreateChirpParams{
+		ID:        uuid.NewString(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Body:      validChirpBody,
+		UserID:    user.ID,
+	}
+
+	createdChirp, err := cfg.db.CreateChirp(context.Background(), createChirpParams)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		w.Write([]byte("error encountered could not create chirp"))
+		return
+	}
+
+	type resBody struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserId    string    `json:"user_id"`
+	}
+
+	jsonData := resBody{
+		ID:        createdChirp.ID,
+		CreatedAt: createdChirp.CreatedAt,
+		UpdatedAt: createdChirp.UpdatedAt,
+		Body:      createdChirp.Body,
+		UserId:    createdChirp.UserID,
+	}
+
+	jsonRes, err := json.Marshal(jsonData)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	w.WriteHeader(201)
+	w.Write(jsonRes)
+
+}
+
+func validateChirpBody(chirp string) (string, error) {
+	if len(chirp) > 140 {
+		return "", fmt.Errorf("chirp is too long")
+	}
+
 	unWantedWords := map[string]string{
 		"kerfuffle": "****",
 		"sharbert":  "****",
 		"fornax":    "****",
 	}
 
-	reqBodyWords := strings.Split(reqParams.Body, " ")
+	reqBodyWords := strings.Split(chirp, " ")
 	for i, word := range reqBodyWords {
-
 		if hiddenWord, exists := unWantedWords[strings.ToLower(word)]; exists {
 			reqBodyWords[i] = hiddenWord
 		}
 	}
 
-	processedBodyStr := strings.Join(reqBodyWords, " ")
-
-	w.WriteHeader(200)
-	fmt.Fprintf(w, `{"cleaned_body": %q}`, processedBodyStr)
-
+	return strings.Join(reqBodyWords, " "), nil
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
