@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gaba-bouliva/Chirpy/internal/auth"
 	"github.com/gaba-bouliva/Chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -22,6 +23,22 @@ type apiConfig struct {
 	fileserverHits *atomic.Int32
 	db             *database.Queries
 	env            string
+}
+
+type chirpsResponseBody struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserId    string    `json:"user_id"`
+}
+
+type usersResponseBody struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+	Password  string    `json:"-"`
 }
 
 func main() {
@@ -55,11 +72,16 @@ func main() {
 	}
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
-	mux.HandleFunc("GET /admin/metrics", apiCfg.countHits)
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetMetrics)
+
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
+	mux.HandleFunc("GET /api/chirps/{id}", apiCfg.handleGetChirpByID)
+
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
+	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
+
+	mux.HandleFunc("POST /admin/reset", apiCfg.resetMetrics)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.countHits)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -73,6 +95,39 @@ func main() {
 	}
 }
 
+func (cfg *apiConfig) handleGetChirpByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id := r.PathValue("id")
+	if len(id) < 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("invalid id provided"))
+		return
+	}
+	chirp, err := cfg.db.GetChirpById(context.Background(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
+
+	chirpData := chirpsResponseBody{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserId:    chirp.Body,
+	}
+
+	jsonRes, err := json.Marshal(chirpData)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
+
+	w.Write(jsonRes)
+}
+
 func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	chirpList, err := cfg.db.GetAllChirps(context.Background())
@@ -82,18 +137,10 @@ func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	type resBody struct {
-		ID        string    `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Body      string    `json:"body"`
-		UserId    string    `json:"user_id"`
-	}
-
-	chirpListData := []resBody{}
+	chirpListData := []chirpsResponseBody{}
 
 	for _, chirp := range chirpList {
-		newChirp := resBody{
+		newChirp := chirpsResponseBody{
 			ID:        chirp.ID,
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
@@ -115,17 +162,73 @@ func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request)
 
 }
 
-func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	type reqBody struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
-	var reqBodyParam reqBody
+	var reqBodyParams reqBody
 
 	w.Header().Set("Content-Type", "appliation/json")
 
 	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(&reqBodyParam)
+	err := decoder.Decode(&reqBodyParams)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Println("error: ", err.Error())
+		fmt.Fprintf(w, "error encountered decoding request body")
+		return
+	}
+
+	user, err := cfg.db.GetUserByEmail(r.Context(), reqBodyParams.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprintf(w, "invalid email or password provided")
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		w.Write([]byte("error encountered please try again later"))
+		return
+	}
+
+	err = auth.CheckPasswordHash(reqBodyParams.Password, user.HashedPassword)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Println(err)
+		fmt.Fprintf(w, "invalid email or password provided")
+		return
+	}
+
+	jsonData := usersResponseBody{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	jsonRes, err := json.Marshal(jsonData)
+	if err != nil {
+		log.Println(err)
+	}
+	w.WriteHeader(200)
+	w.Write(jsonRes)
+
+}
+
+func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	type reqBody struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	var reqBodyParams reqBody
+
+	w.Header().Set("Content-Type", "appliation/json")
+
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&reqBodyParams)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Println("error: ", err.Error())
@@ -133,11 +236,24 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	password, err := auth.HashPassword(reqBodyParams.Password)
+	if err != nil {
+		if err.Error() == "invalid password provided" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(err.Error()))
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("error encountered please try agin"))
+		log.Println(err)
+		return
+	}
+
 	createUserParam := database.CreateUserParams{
-		ID:        uuid.NewString(),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Email:     reqBodyParam.Email,
+		ID:             uuid.NewString(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Email:          reqBodyParams.Email,
+		HashedPassword: password,
 	}
 
 	createdUser, err := cfg.db.CreateUser(context.Background(), createUserParam)
@@ -148,14 +264,7 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type resBody struct {
-		ID        string    `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Email     string    `json:"email"`
-	}
-
-	jsonData := resBody{
+	jsonData := usersResponseBody{
 		ID:        createdUser.ID,
 		CreatedAt: createdUser.CreatedAt,
 		UpdatedAt: createdUser.UpdatedAt,
@@ -164,7 +273,7 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	jsonRes, err := json.Marshal(jsonData)
 	if err != nil {
-		log.Fatalln(err)
+		log.Println(err)
 	}
 	w.WriteHeader(201)
 	w.Write(jsonRes)
@@ -218,15 +327,7 @@ func (cfg *apiConfig) handleChirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type resBody struct {
-		ID        string    `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Body      string    `json:"body"`
-		UserId    string    `json:"user_id"`
-	}
-
-	jsonData := resBody{
+	jsonData := chirpsResponseBody{
 		ID:        createdChirp.ID,
 		CreatedAt: createdChirp.CreatedAt,
 		UpdatedAt: createdChirp.UpdatedAt,
