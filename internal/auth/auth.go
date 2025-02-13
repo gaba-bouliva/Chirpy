@@ -1,7 +1,11 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -48,13 +52,32 @@ func ValidateJWT(tokenString, tokenSecret string) (string, error) {
 	}
 	if claims, ok := token.Claims.(*jwt.RegisteredClaims); ok && token.Valid {
 		if claims.Issuer != "chirpy" {
-			return "", fmt.Errorf("invalid token issuer")
+			return "", fmt.Errorf("invalid access token issuer")
 		}
 		if claims.ExpiresAt.Time.Before(time.Now()) {
-			return "", fmt.Errorf("expired token provided")
+			return "", fmt.Errorf("expired access token provided")
 		}
 		return claims.Subject, nil
 	}
 
 	return "", fmt.Errorf("invalid token provided")
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+	tokenString := headers.Get("Authorization")
+	tokenString = strings.TrimSpace(strings.TrimPrefix(tokenString, "Bearer "))
+	if tokenString == "" {
+		return "", fmt.Errorf("authentication token not found")
+	}
+	return tokenString, nil
+}
+
+func MakeRefreshToken() (string, error) {
+	randBytes := make([]byte, 32)
+	_, err := rand.Read(randBytes)
+	if err != nil {
+		return "", err
+	}
+	encodedStr := hex.EncodeToString(randBytes)
+	return encodedStr, nil
 }
