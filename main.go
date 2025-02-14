@@ -83,12 +83,15 @@ func main() {
 	mux.HandleFunc("GET /api/chirps/{id}", apiCfg.handleGetChirpByID)
 
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
+	mux.HandleFunc("PUT /api/users", apiCfg.handleUpdateUser)
 	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
+
 	mux.HandleFunc("POST /api/refresh", apiCfg.handleRefreshToken)
 	mux.HandleFunc("POST /api/revoke", apiCfg.handleRevoke)
 
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetMetrics)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.countHits)
+
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -383,6 +386,90 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(201)
 	w.Write(jsonRes)
+}
+
+func (cfg *apiConfig) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	type ReqBody struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	tokenStr, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	userId, err := auth.ValidateJWT(tokenStr, cfg.tokenSecret)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Println(err.Error())
+		w.Write([]byte("unauthorized"))
+		return
+	}
+
+	refreshToken, err := cfg.db.GetTokenByUserId(r.Context(), userId)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Println(err.Error())
+		w.Write([]byte("unauthorized"))
+		return
+	}
+
+	var reqBodyParams ReqBody
+
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&reqBodyParams)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Println(err.Error())
+		w.Write([]byte("error proccessing request"))
+		return
+	}
+
+	hashedPwd, err := auth.HashPassword(reqBodyParams.Password)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err.Error())
+		w.Write([]byte("server encountered an error"))
+		return
+	}
+
+	updateUserParams := database.UpdateUserParams{
+		Email:          reqBodyParams.Email,
+		HashedPassword: hashedPwd,
+		UpdatedAt:      time.Now(),
+		ID:             userId,
+	}
+
+	updatedUser, err := cfg.db.UpdateUser(r.Context(), updateUserParams)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		w.Write([]byte("update failed"))
+		return
+	}
+
+	res := usersResponseBody{
+		ID:           updatedUser.ID,
+		CreatedAt:    updatedUser.CreatedAt,
+		UpdatedAt:    updatedUser.UpdatedAt,
+		Email:        updateUserParams.Email,
+		Token:        tokenStr,
+		RefreshToken: refreshToken.Token,
+	}
+
+	jsonRes, err := json.Marshal(res)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		w.Write([]byte("server encountered an error"))
+	}
+
+	w.WriteHeader(200)
+	w.Write(jsonRes)
+
 }
 
 func (cfg *apiConfig) handleChirp(w http.ResponseWriter, r *http.Request) {
