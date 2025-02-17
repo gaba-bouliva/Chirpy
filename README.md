@@ -9,7 +9,6 @@ Chirpy is a social media platform for sharing short messages called chirps. This
 
 - Go 1.16+
 - PostgreSQL 12+
-- Git
 
 ### Installation
 
