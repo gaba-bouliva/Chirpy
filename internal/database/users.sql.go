@@ -13,7 +13,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, created_at, updated_at, email, hashed_password)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, email, hashed_password, created_at, updated_at
+RETURNING id, email, hashed_password, created_at, updated_at, is_chirpy_red
 `
 
 type CreateUserParams struct {
@@ -39,6 +39,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.HashedPassword,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
 }
@@ -53,7 +54,7 @@ func (q *Queries) DeleteAllUsers(ctx context.Context) error {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, hashed_password, created_at, updated_at FROM users WHERE email = $1 LIMIT 1
+SELECT id, email, hashed_password, created_at, updated_at, is_chirpy_red FROM users WHERE email = $1 LIMIT 1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -65,12 +66,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.HashedPassword,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
 }
 
 const getUserById = `-- name: GetUserById :one
-SELECT id, email, hashed_password, created_at, updated_at FROM users WHERE id = $1 LIMIT 1
+SELECT id, email, hashed_password, created_at, updated_at, is_chirpy_red FROM users WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetUserById(ctx context.Context, id string) (User, error) {
@@ -82,6 +84,7 @@ func (q *Queries) GetUserById(ctx context.Context, id string) (User, error) {
 		&i.HashedPassword,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
 }
@@ -89,7 +92,7 @@ func (q *Queries) GetUserById(ctx context.Context, id string) (User, error) {
 const updateUser = `-- name: UpdateUser :one
 UPDATE users set email = $1, hashed_password = $2, updated_at = $3 
 WHERE id = $4
-RETURNING id, email, hashed_password, created_at, updated_at
+RETURNING id, email, hashed_password, created_at, updated_at, is_chirpy_red
 `
 
 type UpdateUserParams struct {
@@ -113,6 +116,21 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.HashedPassword,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
+}
+
+const updateUserSetChirpyRed = `-- name: UpdateUserSetChirpyRed :exec
+UPDATE users set is_chirpy_red = $1 WHERE id = $2
+`
+
+type UpdateUserSetChirpyRedParams struct {
+	IsChirpyRed bool
+	ID          string
+}
+
+func (q *Queries) UpdateUserSetChirpyRed(ctx context.Context, arg UpdateUserSetChirpyRedParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserSetChirpyRed, arg.IsChirpyRed, arg.ID)
+	return err
 }

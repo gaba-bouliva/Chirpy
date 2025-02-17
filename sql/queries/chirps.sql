@@ -9,6 +9,8 @@ SELECT * FROM chirps WHERE id = $1 LIMIT 1;
 -- name: GetAllChirps :many
 SELECT * FROM chirps ORDER BY created_at ASC;
 
--- name: DeleteAllChirps :exec
-DELETE FROM chirps;
+-- name: GetAllUserChirps :many
+SELECT * FROM chirps WHERE user_id = $1 ORDER BY created_at ASC;
 
+-- name: DeleteChirpById :exec
+DELETE FROM chirps WHERE id = $1;
