@@ -72,7 +72,3 @@ Chirpy is a social media platform for sharing short messages called chirps. This
 ### Health Check
 
 - `GET /api/healthz`: Health check endpoint.
-
-## License
-
-This project is licensed under the MIT License.
